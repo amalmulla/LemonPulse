@@ -10,7 +10,6 @@ Original file is located at
 # LEMON PULSE - Cloud Computing HW3
 # Smart Lemon Tree Monitoring & Diagnosis System
 # Team: Wolf | Course: Cloud Computing
-!pip install ipywidgets matplotlib nltk requests pillow -q
 
 import nltk
 nltk.download('punkt', quiet=True)
@@ -440,9 +439,7 @@ def generate_pyspark_bigdata_chart_b64():
 
     # 3. PySpark Map-Reduce
     rdd = spark.sparkContext.parallelize(records)
-    mapped_rdd = rdd.map(lambda x: (x[0], (x[1], x[1])))
-    reduced_rdd = mapped_rdd.reduceByKey(lambda a, b: (min(a[0], b[0]), max(a[1], b[1])))
-    results = reduced_rdd.collect()
+    results = extract_anomalies(rdd, is_dataframe_row=False)
 
     parameters, min_values, max_values = [], [], []
     for param, (min_val, max_val) in results:
@@ -802,10 +799,7 @@ def search_documents(query):
 
 #@title Big Data
 # 1. INSTALL AND SETUP APACHE SPARK (BIG DATA)
-print("Installing Java and PySpark...")
-!apt-get update > /dev/null 2>&1
-!apt-get install default-jre -y > /dev/null 2>&1
-!pip install pyspark -q
+print("Setting up PySpark...")
 
 import os
 
@@ -817,10 +811,19 @@ if "SPARK_HOME" in os.environ:
 
 from pyspark.sql import SparkSession
 
-print("Starting Spark Session...")
-# Create Spark session (using local master explicitly)
-spark = SparkSession.builder.master("local[*]").appName("LemonPulse Big Data").getOrCreate()
-print("PySpark Environment Setup Successful!")
+def extract_anomalies(rdd, is_dataframe_row=False):
+
+    """
+    Given an RDD of either Row(parameter, value) or tuple(parameter, value),
+    perform Map-Reduce to find the min and max for each parameter.
+    """
+    if is_dataframe_row:
+        mapped_rdd = rdd.map(lambda row: (row["parameter"], (float(row["value"]), float(row["value"]))))
+    else:
+        mapped_rdd = rdd.map(lambda x: (x[0], (float(x[1]), float(x[1]))))
+    
+    reduced_rdd = mapped_rdd.reduceByKey(lambda a, b: (min(a[0], b[0]), max(a[1], b[1])))
+    return reduced_rdd.collect()
 
 # Commented out IPython magic to ensure Python compatibility.
 # 2. SENSOR DATA MAP-REDUCE & GRAPHING
@@ -828,63 +831,60 @@ import csv
 import random
 import matplotlib.pyplot as plt
 
-# "Big Data" CSV file of sensor readings
-filename = "sensor_data.csv"
-with open(filename, 'w', newline='') as f:
-    writer = csv.writer(f)
-    writer.writerow(["timestamp", "parameter", "value"])
-    for i in range(10000): # Simulating 10,000 readings for Big Data
-        writer.writerow([f"2025-05-10T12:{i%60:02d}:00", "ph", round(random.uniform(5.5, 7.5), 2)])
-        writer.writerow([f"2025-05-10T12:{i%60:02d}:00", "humidity", round(random.uniform(30.0, 70.0), 2)])
-        writer.writerow([f"2025-05-10T12:{i%60:02d}:00", "temp", round(random.uniform(20.0, 35.0), 2)])
+if __name__ == "__main__":
+    print("Starting Spark Session...")
+    # Create Spark session (using local master explicitly)
+    spark = SparkSession.builder.master("local[*]").appName("LemonPulse Big Data").getOrCreate()
+    print("PySpark Environment Setup Successful!")
 
-# Load the data using Spark DataFrame and convert to RDD
-df = spark.read.csv(filename, header=True, inferSchema=True)
-rdd = df.rdd
+    # "Big Data" CSV file of sensor readings
+    filename = "sensor_data.csv"
+    with open(filename, 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(["timestamp", "parameter", "value"])
+        for i in range(10000): # Simulating 10,000 readings for Big Data
+            writer.writerow([f"2025-05-10T12:{i%60:02d}:00", "ph", round(random.uniform(5.5, 7.5), 2)])
+            writer.writerow([f"2025-05-10T12:{i%60:02d}:00", "humidity", round(random.uniform(30.0, 70.0), 2)])
+            writer.writerow([f"2025-05-10T12:{i%60:02d}:00", "temp", round(random.uniform(20.0, 35.0), 2)])
 
-# MAP Stage
-# Map each row to a key-value pair: (parameter, (value, value))
-# We map it to two values so we can find both MIN and MAX simultaneously
-mapped_rdd = rdd.map(lambda row: (row["parameter"], (row["value"], row["value"])))
+    # Load the data using Spark DataFrame and convert to RDD
+    df = spark.read.csv(filename, header=True, inferSchema=True)
+    rdd = df.rdd
 
-# REDUCE Stage
-# reduceByKey groups by parameter. We take the minimum of the first values, and maximum of the second.
-# a[0], b[0] -> mins | a[1], b[1] -> maxes
-reduced_rdd = mapped_rdd.reduceByKey(lambda a, b: (min(a[0], b[0]), max(a[1], b[1])))
+    # Map-Reduce execution
+    results = extract_anomalies(rdd, is_dataframe_row=True)
 
-# Collect and Print Results
-results = reduced_rdd.collect()
+    print("--- MAP-REDUCE RESULTS ---")
+    parameters = []
+    min_values = []
+    max_values = []
 
-print("--- MAP-REDUCE RESULTS ---")
-parameters = []
-min_values = []
-max_values = []
+    for param, (min_val, max_val) in results:
+        print(f"Parameter: {param.upper():<8} | Min: {min_val:<6} | Max: {max_val}")
+        parameters.append(param.upper())
+        min_values.append(min_val)
+        max_values.append(max_val)
 
-for param, (min_val, max_val) in results:
-    print(f"Parameter: {param.upper():<8} | Min: {min_val:<6} | Max: {max_val}")
-    parameters.append(param.upper())
-    min_values.append(min_val)
-    max_values.append(max_val)
+    # Data Visualization
+    # %matplotlib inline
 
-# Data Visualization
-# %matplotlib inline
+    fig, ax = plt.subplots(figsize=(8, 5))
+    x = range(len(parameters))
+    width = 0.35
 
-fig, ax = plt.subplots(figsize=(8, 5))
-x = range(len(parameters))
-width = 0.35
+    ax.bar([pos - width/2 for pos in x], min_values, width, label='Minimum Value', color='#3B82F6')
+    ax.bar([pos + width/2 for pos in x], max_values, width, label='Maximum Value', color='#EF4444')
 
-ax.bar([pos - width/2 for pos in x], min_values, width, label='Minimum Value', color='#3B82F6')
-ax.bar([pos + width/2 for pos in x], max_values, width, label='Maximum Value', color='#EF4444')
+    ax.set_ylabel('Recorded Values')
+    ax.set_title('Big Data Analysis: Sensor Parameters (Min vs Max)')
+    ax.set_xticks(x)
+    ax.set_xticklabels(parameters)
+    ax.legend()
+    ax.grid(axis='y', linestyle='--', alpha=0.7)
 
-ax.set_ylabel('Recorded Values')
-ax.set_title('Big Data Analysis: Sensor Parameters (Min vs Max)')
-ax.set_xticks(x)
-ax.set_xticklabels(parameters)
-ax.legend()
-ax.grid(axis='y', linestyle='--', alpha=0.7)
+    plt.tight_layout()
+    # plt.show()
 
-plt.tight_layout()
-plt.show()
 
 #@title Screen Renderers
 def render_home():
